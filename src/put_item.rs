@@ -1,10 +1,12 @@
 use aws_sdk_dynamodb::{operation::put_item::PutItemOutput, types::AttributeValue};
 use std::collections::HashMap;
 
+use crate::{DynamoDbStore, error::Result};
+
 /// Inserts or updates an item in a DynamoDB table.
 ///
-/// This function creates a new DynamoDB client for each operation and uses AWS credentials
-/// from the environment (via environment variables, AWS config files, or IAM roles).
+/// **Note**: This is a convenience function that creates a new client for each operation.
+/// For better performance, use [`DynamoDbStore`] directly to reuse the client across operations.
 ///
 /// # Arguments
 ///
@@ -18,6 +20,8 @@ use std::collections::HashMap;
 /// # Errors
 ///
 /// Returns an error if:
+/// - The table name is empty
+/// - The item map is empty
 /// - AWS credentials are not properly configured
 /// - The specified table does not exist
 /// - The item exceeds DynamoDB's size limits (400 KB)
@@ -32,7 +36,7 @@ use std::collections::HashMap;
 /// use std::collections::HashMap;
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), aws_sdk_dynamodb::Error> {
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let mut item = HashMap::new();
 ///     item.insert("id".to_string(), AttributeValue::S("user123".to_string()));
 ///     item.insert("name".to_string(), AttributeValue::S("John Doe".to_string()));
@@ -42,18 +46,30 @@ use std::collections::HashMap;
 ///     Ok(())
 /// }
 /// ```
+///
+/// # Performance Note
+///
+/// For better performance in applications with multiple operations, use [`DynamoDbStore`]:
+///
+/// ```rust,no_run
+/// use clean_dynamodb_store::DynamoDbStore;
+/// use aws_sdk_dynamodb::types::AttributeValue;
+/// use std::collections::HashMap;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let store = DynamoDbStore::new().await?;
+///
+///     let mut item = HashMap::new();
+///     item.insert("id".to_string(), AttributeValue::S("user123".to_string()));
+///     store.put_item("users", item).await?;
+///     Ok(())
+/// }
+/// ```
 pub async fn put_item(
     table_name: &str,
     item: HashMap<String, AttributeValue>,
-) -> Result<PutItemOutput, aws_sdk_dynamodb::Error> {
-    let config = aws_config::load_from_env().await;
-
-    let result = aws_sdk_dynamodb::Client::new(&config)
-        .put_item()
-        .table_name(table_name)
-        .set_item(Some(item))
-        .send()
-        .await?;
-
-    Ok(result)
+) -> Result<PutItemOutput> {
+    let store = DynamoDbStore::new().await?;
+    store.put_item(table_name, item).await
 }

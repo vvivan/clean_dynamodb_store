@@ -2,10 +2,12 @@ use std::collections::HashMap;
 
 use aws_sdk_dynamodb::{operation::delete_item::DeleteItemOutput, types::AttributeValue};
 
+use crate::{DynamoDbStore, error::Result};
+
 /// Deletes an item from a DynamoDB table.
 ///
-/// This function creates a new DynamoDB client for each operation and uses AWS credentials
-/// from the environment (via environment variables, AWS config files, or IAM roles).
+/// **Note**: This is a convenience function that creates a new client for each operation.
+/// For better performance, use [`DynamoDbStore`] directly to reuse the client across operations.
 ///
 /// # Arguments
 ///
@@ -21,6 +23,8 @@ use aws_sdk_dynamodb::{operation::delete_item::DeleteItemOutput, types::Attribut
 /// # Errors
 ///
 /// Returns an error if:
+/// - The table name is empty
+/// - The key map is empty
 /// - AWS credentials are not properly configured
 /// - The specified table does not exist
 /// - The key does not match the table's key schema
@@ -35,7 +39,7 @@ use aws_sdk_dynamodb::{operation::delete_item::DeleteItemOutput, types::Attribut
 /// use std::collections::HashMap;
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), aws_sdk_dynamodb::Error> {
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     // For a table with partition key "id"
 ///     let mut key = HashMap::new();
 ///     key.insert("id".to_string(), AttributeValue::S("user123".to_string()));
@@ -53,7 +57,7 @@ use aws_sdk_dynamodb::{operation::delete_item::DeleteItemOutput, types::Attribut
 /// use std::collections::HashMap;
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), aws_sdk_dynamodb::Error> {
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     // For a table with partition key "user_id" and sort key "timestamp"
 ///     let mut key = HashMap::new();
 ///     key.insert("user_id".to_string(), AttributeValue::S("user123".to_string()));
@@ -63,18 +67,30 @@ use aws_sdk_dynamodb::{operation::delete_item::DeleteItemOutput, types::Attribut
 ///     Ok(())
 /// }
 /// ```
+///
+/// # Performance Note
+///
+/// For better performance in applications with multiple operations, use [`DynamoDbStore`]:
+///
+/// ```rust,no_run
+/// use clean_dynamodb_store::DynamoDbStore;
+/// use aws_sdk_dynamodb::types::AttributeValue;
+/// use std::collections::HashMap;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let store = DynamoDbStore::new().await?;
+///
+///     let mut key = HashMap::new();
+///     key.insert("id".to_string(), AttributeValue::S("user123".to_string()));
+///     store.delete_item("users", key).await?;
+///     Ok(())
+/// }
+/// ```
 pub async fn delete_item(
     table_name: &str,
     key: HashMap<String, AttributeValue>,
-) -> Result<DeleteItemOutput, aws_sdk_dynamodb::Error> {
-    let config = aws_config::load_from_env().await;
-
-    let result = aws_sdk_dynamodb::Client::new(&config)
-        .delete_item()
-        .table_name(table_name)
-        .set_key(Some(key))
-        .send()
-        .await?;
-
-    Ok(result)
+) -> Result<DeleteItemOutput> {
+    let store = DynamoDbStore::new().await?;
+    store.delete_item(table_name, key).await
 }
