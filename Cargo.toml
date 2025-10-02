@@ -1,11 +1,16 @@
 [package]
 name = "clean_dynamodb_store"
 version = "0.0.2"
-edition = "2021"
+edition = "2024"
 authors = ["Ivan Videnovic"]
 description = "A library which follows clean architecture principles and provides a DynamoDB store implementation."
 keywords = ["aws", "dynamodb", "store", "clean-architecture", "database"]
+categories = ["database", "api-bindings"]
 license = "MIT"
+repository = "https://github.com/vvivan/clean_dynamodb_store"
+homepage = "https://github.com/vvivan/clean_dynamodb_store"
+documentation = "https://docs.rs/clean_dynamodb_store"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,3 +19,6 @@ aws-config = { version = "1.8.6", features = ["behavior-version-latest"] }
 aws-sdk-dynamodb = { version = "1.93.0", features = [
   "behavior-version-latest",
 ] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

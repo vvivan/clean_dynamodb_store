@@ -99,6 +99,94 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 - **test**: Adding or updating tests (e.g., `test: add unit tests for put_item`)
 - **perf**: Performance improvements (e.g., `perf: implement client connection pooling`)
 
+### Versioning
+This project follows [Semantic Versioning](https://semver.org/) (SemVer):
+
+- **MAJOR** version (X.0.0): Incompatible API changes
+- **MINOR** version (0.X.0): New functionality in a backwards-compatible manner
+- **PATCH** version (0.0.X): Backwards-compatible bug fixes
+
+Pre-1.0.0 versions (0.x.x) may introduce breaking changes in minor versions.
+
+## Release Checklist
+
+Before publishing a new version to crates.io, ensure all items are completed:
+
+### Pre-Release Verification
+- [ ] All tests pass: `cargo test`
+- [ ] No clippy warnings: `cargo clippy -- -D warnings`
+- [ ] Code is formatted: `cargo fmt --check`
+- [ ] Documentation builds without warnings: `cargo doc --no-deps`
+- [ ] Run `cargo publish --dry-run` to verify package contents
+- [ ] Check `.crate` file size is under 10MB limit
+
+### Documentation & Metadata
+- [ ] Update version number in `Cargo.toml` following SemVer
+- [ ] Update `CHANGELOG.md` with all changes for this version
+- [ ] Ensure all public APIs have rustdoc comments with examples
+- [ ] Verify `README.md` is up to date
+- [ ] Confirm `Cargo.toml` metadata is accurate (description, keywords, categories, repository, homepage)
+
+### Security & Dependencies
+- [ ] Run `cargo audit` to check for vulnerable dependencies
+- [ ] Review and update dependencies if needed
+- [ ] Ensure no sensitive information in code or commits
+
+### Quality Assurance
+- [ ] All planned features for this version are implemented
+- [ ] No known critical bugs
+- [ ] Breaking changes are documented in CHANGELOG
+- [ ] Migration guide provided for breaking changes (if applicable)
+
+### Publishing
+- [ ] Create git tag for version: `git tag v0.X.X`
+- [ ] Push tag to GitHub: `git push origin v0.X.X`
+- [ ] Publish to crates.io: `cargo publish`
+- [ ] Create GitHub release with changelog notes
+- [ ] Announce release (if significant)
+
+### Post-Release
+- [ ] Verify package on crates.io
+- [ ] Check docs.rs built successfully
+- [ ] Update version to next development version (optional)
+- [ ] Close related GitHub issues/milestones
+
+## Publishing Guidelines
+
+### First-Time Publishing Setup
+1. Create account on [crates.io](https://crates.io) (requires GitHub login)
+2. Verify your email address in Account Settings
+3. Generate API token from crates.io
+4. Run `cargo login` with your token
+
+### Publishing Process
+```bash
+# 1. Verify everything is ready
+cargo publish --dry-run
+
+# 2. Review the package contents
+cargo package --list
+
+# 3. Check package size
+ls -lh target/package/*.crate
+
+# 4. Publish to crates.io
+cargo publish
+```
+
+### Important Notes
+- **Publishing is permanent** - versions cannot be overwritten or deleted
+- Use `cargo yank --vers X.X.X` to prevent new dependencies on a broken version
+- Yanked versions can still be used by existing projects
+- Maximum package size: 10MB
+- Consider using `cargo-release` tool for automated releasing
+
+### Trusted Publishing (2025+)
+Configure GitHub Actions to publish without API tokens using OpenID Connect (OIDC):
+- Set up trusted publishing on crates.io
+- Configure GitHub repository permissions
+- Use official publish action in CI/CD
+
 ## Questions to Resolve
 
 - Should we provide a `Store` struct that holds the client, or keep functional API?
@@ -108,6 +196,8 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 
 ## Notes
 
-- Library targets Rust 2021 edition
+- Library targets Rust 2024 edition
 - Uses AWS SDK v1.x (latest stable)
 - MIT licensed
+- Follows Rust API Guidelines
+- All releases documented in CHANGELOG.md
