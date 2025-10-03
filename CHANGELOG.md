@@ -80,14 +80,14 @@ API follows AWS SDK best practices by reusing the client, providing 10-100x bett
 - Follows AWS SDK best practices for client usage
 - Eliminates per-operation client creation overhead
 
-## [0.0.2] - 2025-10-02
+## [0.0.2] - 2024-04-01
 
 ### Changed
 - Fix keywords length in Cargo.toml
 - Update README documentation
 - Add missing cargo metadata
 
-## [0.0.1] - Initial Release
+## [0.0.1] - 2024-04-01
 
 ### Added
 - `put_item` function for inserting/updating items in DynamoDB tables
