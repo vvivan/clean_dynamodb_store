@@ -4,14 +4,14 @@
 
 ## Features
 
-- Easy-to-use asynchronous API for DynamoDB
-- Efficient client reuse following AWS SDK best practices
-- Optimized for AWS Lambda with minimal cold start overhead
-- Supports basic DynamoDB operations like put (insert/update) and delete items
-- Input validation for table names and items/keys
-- Custom error types for better error handling
-- Built on top of `aws-sdk-dynamodb` for robust and up-to-date DynamoDB access
-- Designed with clean architecture principles in mind
+- **Type-safe API** - Work with your own Rust structs using serde
+- **Efficient client reuse** - Following AWS SDK best practices
+- **Optimized for AWS Lambda** - Minimal cold start overhead
+- **Dual API** - High-level type-safe methods + low-level HashMap methods
+- **Full serde support** - Flattening, enums, custom serialization
+- **Input validation** - Table names and items/keys
+- **Custom error types** - Better error handling with thiserror
+- **Clean architecture** - Designed with SOLID principles in mind
 
 ## Prerequisites
 
@@ -30,7 +30,59 @@ clean_dynamodb_store = "0.0.2"
 ```
 ## Usage
 
-Create a `DynamoDbStore` once and reuse it across operations for optimal performance:
+Create a `DynamoDbStore` once and reuse it across operations for optimal performance.
+
+### Type-Safe API (Recommended)
+
+Work with your own structs using serde - no manual AttributeValue construction needed:
+
+```rust
+use clean_dynamodb_store::DynamoDbStore;
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct User {
+    id: String,
+    name: String,
+    age: u32,
+}
+
+#[derive(Serialize)]
+struct UserKey {
+    id: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create store once, reuse many times
+    let store = DynamoDbStore::new().await?;
+
+    // Put an item
+    let user = User {
+        id: "user123".to_string(),
+        name: "John Doe".to_string(),
+        age: 30,
+    };
+    store.put("users", &user).await?;
+
+    // Get an item
+    let key = UserKey { id: "user123".to_string() };
+    let user: Option<User> = store.get("users", &key).await?;
+
+    if let Some(user) = user {
+        println!("Found user: {} (age {})", user.name, user.age);
+    }
+
+    // Delete an item
+    store.delete("users", &key).await?;
+
+    Ok(())
+}
+```
+
+### Low-Level API
+
+For advanced use cases, you can work directly with DynamoDB's AttributeValue types:
 
 ```rust
 use clean_dynamodb_store::DynamoDbStore;
@@ -39,7 +91,6 @@ use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create store once, reuse many times
     let store = DynamoDbStore::new().await?;
 
     // Put an item
@@ -63,8 +114,13 @@ For AWS Lambda functions, initialize the store in `main()` to reuse the client a
 
 ```rust
 use clean_dynamodb_store::DynamoDbStore;
-use aws_sdk_dynamodb::types::AttributeValue;
-use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct User {
+    id: String,
+    name: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -79,10 +135,12 @@ async fn handler(
     event: Event,
     store: &DynamoDbStore,
 ) -> Result<Response, Box<dyn std::error::Error>> {
-    // Use store - no client creation overhead!
-    let mut item = HashMap::new();
-    item.insert("id".to_string(), AttributeValue::S(event.id));
-    store.put_item("users", item).await?;
+    // Use store with type-safe API - no client creation overhead!
+    let user = User {
+        id: event.id,
+        name: event.name,
+    };
+    store.put("users", &user).await?;
 
     Ok(Response::success())
 }

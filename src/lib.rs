@@ -24,7 +24,55 @@
 //!
 //! ## Usage
 //!
-//! Create a [`DynamoDbStore`] once and reuse it across operations for optimal performance:
+//! Create a [`DynamoDbStore`] once and reuse it across operations for optimal performance.
+//!
+//! ### Type-Safe API (Recommended)
+//!
+//! The type-safe API works with your own structs using serde:
+//!
+//! ```rust,no_run
+//! use clean_dynamodb_store::DynamoDbStore;
+//! use serde::{Serialize, Deserialize};
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct User {
+//!     id: String,
+//!     name: String,
+//!     age: u32,
+//! }
+//!
+//! #[derive(Serialize)]
+//! struct UserKey {
+//!     id: String,
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create store once, reuse many times
+//!     let store = DynamoDbStore::new().await?;
+//!
+//!     // Put an item using a struct
+//!     let user = User {
+//!         id: "user123".to_string(),
+//!         name: "John Doe".to_string(),
+//!         age: 30,
+//!     };
+//!     store.put("users", &user).await?;
+//!
+//!     // Get an item
+//!     let key = UserKey { id: "user123".to_string() };
+//!     let user: Option<User> = store.get("users", &key).await?;
+//!
+//!     // Delete an item
+//!     store.delete("users", &key).await?;
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ### Low-Level API
+//!
+//! For advanced use cases, you can use the low-level HashMap API:
 //!
 //! ```rust,no_run
 //! use clean_dynamodb_store::DynamoDbStore;
@@ -33,7 +81,6 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Create store once, reuse many times
 //!     let store = DynamoDbStore::new().await?;
 //!
 //!     // Put an item
@@ -58,8 +105,13 @@
 //!
 //! ```rust,no_run
 //! use clean_dynamodb_store::DynamoDbStore;
-//! use aws_sdk_dynamodb::types::AttributeValue;
-//! use std::collections::HashMap;
+//! use serde::{Serialize, Deserialize};
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct User {
+//!     id: String,
+//!     name: String,
+//! }
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -70,6 +122,12 @@
 //!     // lambda_runtime::run(service_fn(|event| handler(event, &store))).await
 //!     Ok(())
 //! }
+//!
+//! // async fn handler(event: Event, store: &DynamoDbStore) -> Result<Response, Error> {
+//! //     let user = User { id: event.id, name: event.name };
+//! //     store.put("users", &user).await?;
+//! //     Ok(Response::success())
+//! // }
 //! ```
 
 pub mod error;

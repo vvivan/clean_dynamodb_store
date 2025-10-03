@@ -8,10 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **`DynamoDbStore` struct** - New primary API for interacting with DynamoDB
+- **Type-safe API** - High-level methods using serde for ergonomic DynamoDB operations
+  - `put<T: Serialize>()` - Insert/update items using Rust structs
+  - `delete<K: Serialize>()` - Delete items using key structs
+  - `get<K: Serialize, T: DeserializeOwned>()` - Retrieve and deserialize items
+  - Full serde support: flattening, enums, custom serialization
+  - Automatic conversion between Rust types and DynamoDB AttributeValue format
+- **`DynamoDbStore` struct** - Primary API for interacting with DynamoDB
   - Reuses AWS client across operations for massive performance improvement
   - Thread-safe and Clone-able
   - Three constructors: `new()`, `from_config()`, `from_client()`
+  - Dual API: high-level type-safe methods + low-level HashMap methods
 - Custom error types using `thiserror` for better error handling
   - `Error` enum with `AwsSdk` and `Validation` variants
   - `Result<T>` type alias for convenience
@@ -21,7 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive rustdoc documentation for all public APIs
 - LICENSE file (MIT)
 - CHANGELOG.md following Keep a Changelog format
-- `thiserror` dependency for ergonomic error handling
+- Dependencies:
+  - `serde` 1.0 - Serialization framework
+  - `serde_dynamo` 4.x with aws-sdk-dynamodb+1 feature
+  - `thiserror` 2.0 - Ergonomic error handling
 
 ### Changed
 - **BREAKING**: Error type changed from `aws_sdk_dynamodb::Error` to `clean_dynamodb_store::Error`
