@@ -22,9 +22,9 @@
 //! - Rust 2024 edition or later
 //! - AWS account and configured AWS CLI or environment variables for AWS access
 //!
-//! ## Recommended Usage (with `DynamoDbStore`)
+//! ## Usage
 //!
-//! For best performance, create a [`DynamoDbStore`] once and reuse it across operations:
+//! Create a [`DynamoDbStore`] once and reuse it across operations for optimal performance:
 //!
 //! ```rust,no_run
 //! use clean_dynamodb_store::DynamoDbStore;
@@ -51,34 +51,29 @@
 //! }
 //! ```
 //!
-//! ## Convenience Functions
+//! ## AWS Lambda Usage
 //!
-//! For simple use cases, convenience functions are available that create a client per operation:
+//! For AWS Lambda functions, initialize the store in `main()` before the handler
+//! to reuse the client across warm invocations:
 //!
 //! ```rust,no_run
-//! use clean_dynamodb_store::put_item;
+//! use clean_dynamodb_store::DynamoDbStore;
 //! use aws_sdk_dynamodb::types::AttributeValue;
 //! use std::collections::HashMap;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let mut item = HashMap::new();
-//!     item.insert("id".to_string(), AttributeValue::S("example_id".to_string()));
-//!     item.insert("content".to_string(), AttributeValue::S("Hello, world!".to_string()));
+//!     // Initialize once during cold start
+//!     let store = DynamoDbStore::new().await?;
 //!
-//!     put_item("your_table_name", item).await?;
+//!     // Pass to handler - reused across warm invocations
+//!     // lambda_runtime::run(service_fn(|event| handler(event, &store))).await
 //!     Ok(())
 //! }
 //! ```
-//!
-//! **Note**: For better performance with multiple operations, use [`DynamoDbStore`] instead.
 
-pub mod delete_item;
 pub mod error;
-pub mod put_item;
 pub mod store;
 
-pub use delete_item::delete_item;
 pub use error::{Error, Result};
-pub use put_item::put_item;
 pub use store::DynamoDbStore;

@@ -25,13 +25,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **BREAKING**: Error type changed from `aws_sdk_dynamodb::Error` to `clean_dynamodb_store::Error`
-- **BREAKING**: Return type of `put_item` and `delete_item` now uses custom `Result` type
 - Updated to Rust 2024 edition
 - Updated aws-config from 1.1.9 to 1.8.6
 - Updated aws-sdk-dynamodb from 1.20.0 to 1.93.0
 - Enhanced Cargo.toml metadata with repository, homepage, categories, and documentation URLs
-- Refactored `put_item` and `delete_item` functions to use `DynamoDbStore` internally
-- Updated documentation to recommend `DynamoDbStore` for better performance
+- Updated documentation with AWS Lambda usage examples
+
+### Removed
+- **BREAKING**: Removed `put_item()` free function - use `DynamoDbStore::put_item()` instead
+- **BREAKING**: Removed `delete_item()` free function - use `DynamoDbStore::delete_item()` instead
+
+**Migration Guide:**
+```rust
+// Before (0.0.2):
+put_item("table", item).await?;
+delete_item("table", key).await?;
+
+// After (0.1.0+):
+let store = DynamoDbStore::new().await?;
+store.put_item("table", item).await?;
+store.delete_item("table", key).await?;
+```
+
+**Rationale**: Free functions created a new DynamoDB client for each operation, which is
+terrible for performance in AWS Lambda and other long-running applications. The `DynamoDbStore`
+API follows AWS SDK best practices by reusing the client, providing 10-100x better performance.
 
 ### Performance
 - 🚀 **Significant performance improvement** by reusing AWS DynamoDB client
