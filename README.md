@@ -31,7 +31,7 @@ Add `clean_dynamodb_store` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-clean_dynamodb_store = "0.0.2"
+clean_dynamodb_store = "0.1.0"
 ```
 ## Usage
 

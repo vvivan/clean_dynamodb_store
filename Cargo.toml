@@ -1,6 +1,6 @@
 [package]
 name = "clean_dynamodb_store"
-version = "0.0.2"
+version = "0.1.0"
 edition = "2024"
 authors = ["Ivan Videnovic"]
 description = "A library which follows clean architecture principles and provides a DynamoDB store implementation."
