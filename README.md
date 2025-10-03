@@ -157,6 +157,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Batch Operations
+
+For efficiently writing large numbers of items, use batch operations. The library automatically handles chunking into batches of 25 items and retries with exponential backoff:
+
+```rust
+use clean_dynamodb_store::DynamoDbStore;
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct User {
+    id: String,
+    name: String,
+    age: u32,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = DynamoDbStore::new().await?;
+
+    // Create 1000 users
+    let users: Vec<User> = (0..1000)
+        .map(|i| User {
+            id: format!("user{}", i),
+            name: format!("User {}", i),
+            age: 20 + (i % 50),
+        })
+        .collect();
+
+    // Batch write - automatically chunks into groups of 25 and retries failures
+    let result = store.batch_put("users", &users).await?;
+
+    println!("Successfully wrote {} items", result.successful);
+    if result.failed > 0 {
+        println!("Failed to write {} items", result.failed);
+        for failed in &result.failed_items {
+            println!("  Error: {}", failed.error);
+        }
+    }
+
+    Ok(())
+}
+```
+
+**Batch operations features:**
+- Automatic chunking into DynamoDB's 25-item limit
+- Exponential backoff retry for throttled requests (up to 3 retries)
+- Detailed success/failure reporting
+- Works with both type-safe API and table-scoped stores
+
 ## AWS Lambda Usage
 
 For AWS Lambda functions, initialize the store in `main()` to reuse the client across warm invocations:

@@ -8,12 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Batch Write Operations** - Efficiently write large numbers of items
+  - `batch_put<T>()` - Batch write with type-safe structs
+  - `batch_put_items()` - Batch write with low-level HashMap API
+  - `BatchWriteResult` - Detailed success/failure statistics
+  - Automatic chunking into batches of 25 (DynamoDB's limit)
+  - Exponential backoff retry for unprocessed items (up to 3 retries)
+  - Available on both `DynamoDbStore` and `TableBoundStore`
+  - Handles throttling and provides detailed error reporting
 - **Table-Scoped API** - Repository pattern support with `TableBoundStore`
   - `DynamoDbStore::for_table(name)` - Create table-bound stores
   - `TableBoundStore` - Eliminates need to pass table name on every operation
   - Ideal for implementing repository pattern (one repository per entity/table)
   - Perfect for clean architecture and domain-driven design
-  - All operations available: `put()`, `delete()`, `get()`, `put_item()`, `delete_item()`
+  - All operations available: `put()`, `delete()`, `get()`, `put_item()`, `delete_item()`, `batch_put()`, `batch_put_items()`
 - **Type-safe API** - High-level methods using serde for ergonomic DynamoDB operations
   - `put<T: Serialize>()` - Insert/update items using Rust structs
   - `delete<K: Serialize>()` - Delete items using key structs

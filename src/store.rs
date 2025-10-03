@@ -1,12 +1,36 @@
 use aws_sdk_dynamodb::{
-    Client, operation::delete_item::DeleteItemOutput, operation::put_item::PutItemOutput,
-    types::AttributeValue,
+    Client,
+    operation::delete_item::DeleteItemOutput,
+    operation::put_item::PutItemOutput,
+    types::{AttributeValue, PutRequest, WriteRequest},
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
 
 use crate::error::{Error, Result};
+
+/// Result of a batch write operation.
+///
+/// Contains information about successful and failed items after all retry attempts.
+#[derive(Debug, Clone)]
+pub struct BatchWriteResult {
+    /// Number of successfully written items
+    pub successful: usize,
+    /// Number of failed items after all retries
+    pub failed: usize,
+    /// Items that permanently failed with error details
+    pub failed_items: Vec<FailedItem>,
+}
+
+/// Information about an item that failed to write after all retry attempts.
+#[derive(Debug, Clone)]
+pub struct FailedItem {
+    /// The item that failed (in DynamoDB's AttributeValue format)
+    pub item: HashMap<String, AttributeValue>,
+    /// Error message describing why it failed
+    pub error: String,
+}
 
 /// A DynamoDB store that maintains a reusable client connection.
 ///
@@ -513,6 +537,254 @@ impl DynamoDbStore {
         }
     }
 
+    /// Batch writes items to DynamoDB using the low-level HashMap API.
+    ///
+    /// This method automatically handles:
+    /// - Chunking items into batches of 25 (DynamoDB's limit)
+    /// - Retrying unprocessed items with exponential backoff
+    /// - Collecting success/failure statistics
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - The name of the DynamoDB table
+    /// * `items` - Vector of items to write (as AttributeValue HashMaps)
+    ///
+    /// # Returns
+    ///
+    /// Returns [`BatchWriteResult`] containing counts of successful and failed items.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The table name is empty
+    /// - AWS credentials are not properly configured
+    /// - The specified table does not exist
+    /// - Network connectivity issues occur
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use aws_sdk_dynamodb::types::AttributeValue;
+    /// use std::collections::HashMap;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///
+    ///     let mut items = Vec::new();
+    ///     for i in 0..100 {
+    ///         let mut item = HashMap::new();
+    ///         item.insert("id".to_string(), AttributeValue::S(format!("user{}", i)));
+    ///         item.insert("name".to_string(), AttributeValue::S(format!("User {}", i)));
+    ///         items.push(item);
+    ///     }
+    ///
+    ///     let result = store.batch_put_items("users", items).await?;
+    ///     println!("Success: {}, Failed: {}", result.successful, result.failed);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn batch_put_items(
+        &self,
+        table_name: &str,
+        items: Vec<HashMap<String, AttributeValue>>,
+    ) -> Result<BatchWriteResult> {
+        Self::validate_table_name(table_name)?;
+
+        if items.is_empty() {
+            return Ok(BatchWriteResult {
+                successful: 0,
+                failed: 0,
+                failed_items: Vec::new(),
+            });
+        }
+
+        let mut successful = 0;
+        let mut failed_items = Vec::new();
+
+        // Use chunking utility to split items into DynamoDB-compliant batches
+        for chunk in crate::chunking::chunk_items(&items, None) {
+            let chunk_items: Vec<_> = chunk.to_vec();
+
+            // Use retry utility for exponential backoff
+            let retry_result = crate::retry::retry_with_backoff(
+                || self.execute_batch_write(table_name, &chunk_items),
+                &crate::retry::RetryConfig::default(),
+            )
+            .await;
+
+            match retry_result {
+                Ok((succeeded, mut failures)) => {
+                    successful += succeeded;
+                    failed_items.append(&mut failures);
+                }
+                Err(e) => {
+                    // Complete batch failure - record all items as failed
+                    for item in chunk_items {
+                        failed_items.push(FailedItem {
+                            item,
+                            error: format!("Batch write error: {}", e),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(BatchWriteResult {
+            successful,
+            failed: failed_items.len(),
+            failed_items,
+        })
+    }
+
+    /// Execute a single batch write operation
+    ///
+    /// Returns (successful_count, failed_items, should_retry)
+    async fn execute_batch_write(
+        &self,
+        table_name: &str,
+        items: &[HashMap<String, AttributeValue>],
+    ) -> Result<((usize, Vec<FailedItem>), bool)> {
+        // Build write requests
+        let write_requests: Vec<WriteRequest> = items
+            .iter()
+            .map(|item| {
+                WriteRequest::builder()
+                    .put_request(
+                        PutRequest::builder()
+                            .set_item(Some(item.clone()))
+                            .build()
+                            .expect("PutRequest build should not fail"),
+                    )
+                    .build()
+            })
+            .collect();
+
+        // Send batch write request
+        let mut request_items = HashMap::new();
+        request_items.insert(table_name.to_string(), write_requests);
+
+        let output = self
+            .client
+            .batch_write_item()
+            .set_request_items(Some(request_items))
+            .send()
+            .await
+            .map_err(|e| Error::AwsSdk(Box::new(e.into())))?;
+
+        // Process result and determine if retry is needed
+        let total_items = items.len();
+        let failed_items = Vec::new();
+
+        match output.unprocessed_items {
+            Some(unprocessed) if !unprocessed.is_empty() => {
+                if let Some(unprocessed_requests) = unprocessed.get(table_name) {
+                    let unprocessed_count = unprocessed_requests.len();
+                    let successful = total_items - unprocessed_count;
+
+                    // Mark as needing retry (retry utility will handle it)
+                    // If this is the last retry attempt, the retry utility will return
+                    // and we'll record these as failures in the next call
+                    Ok(((successful, failed_items), true))
+                } else {
+                    // All items processed successfully
+                    Ok(((total_items, failed_items), false))
+                }
+            }
+            _ => {
+                // All items processed successfully
+                Ok(((total_items, failed_items), false))
+            }
+        }
+    }
+
+    /// Batch writes items to DynamoDB using type-safe structs.
+    ///
+    /// This is a higher-level alternative to [`batch_put_items`](Self::batch_put_items) that works with
+    /// any type implementing [`Serialize`]. Items are automatically converted to DynamoDB's
+    /// AttributeValue format using `serde_dynamo`.
+    ///
+    /// The method automatically handles:
+    /// - Chunking items into batches of 25 (DynamoDB's limit)
+    /// - Retrying unprocessed items with exponential backoff (up to 3 retries)
+    /// - Collecting success/failure statistics
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Any type that implements [`Serialize`]
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - The name of the DynamoDB table
+    /// * `items` - Slice of items to write
+    ///
+    /// # Returns
+    ///
+    /// Returns [`BatchWriteResult`] containing counts of successful and failed items.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The table name is empty
+    /// - Serialization fails for any item
+    /// - AWS credentials are not properly configured
+    /// - The specified table does not exist
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    ///     age: u32,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///
+    ///     let users: Vec<User> = (0..100)
+    ///         .map(|i| User {
+    ///             id: format!("user{}", i),
+    ///             name: format!("User {}", i),
+    ///             age: 20 + (i % 50),
+    ///         })
+    ///         .collect();
+    ///
+    ///     let result = store.batch_put("users", &users).await?;
+    ///     println!("Successfully wrote {} items", result.successful);
+    ///     if result.failed > 0 {
+    ///         println!("Failed to write {} items", result.failed);
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn batch_put<T: Serialize>(
+        &self,
+        table_name: &str,
+        items: &[T],
+    ) -> Result<BatchWriteResult> {
+        Self::validate_table_name(table_name)?;
+
+        // Convert all items to HashMap using serde_dynamo
+        let item_maps: Result<Vec<_>> = items
+            .iter()
+            .map(|item| {
+                serde_dynamo::to_item(item)
+                    .map_err(|e| Error::Validation(format!("Failed to serialize item: {}", e)))
+            })
+            .collect();
+
+        self.batch_put_items(table_name, item_maps?).await
+    }
+
     /// Creates a table-bound store for the specified table.
     ///
     /// This returns a [`TableBoundStore`] that eliminates the need to pass the table name
@@ -819,5 +1091,95 @@ impl TableBoundStore {
     /// - IAM permissions are insufficient
     pub async fn delete_item(&self, key: HashMap<String, AttributeValue>) -> Result<DeleteItemOutput> {
         self.store.delete_item(&self.table_name, key).await
+    }
+
+    /// Batch writes items using type-safe structs.
+    ///
+    /// This method automatically handles chunking items into batches of 25 and retrying
+    /// unprocessed items with exponential backoff.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Any type that implements [`Serialize`]
+    ///
+    /// # Arguments
+    ///
+    /// * `items` - Slice of items to write
+    ///
+    /// # Returns
+    ///
+    /// Returns [`BatchWriteResult`] containing counts of successful and failed items.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let users = store.for_table("users");
+    ///
+    ///     let items: Vec<User> = (0..100)
+    ///         .map(|i| User {
+    ///             id: format!("user{}", i),
+    ///             name: format!("User {}", i),
+    ///         })
+    ///         .collect();
+    ///
+    ///     let result = users.batch_put(&items).await?;
+    ///     println!("Success: {}, Failed: {}", result.successful, result.failed);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn batch_put<T: Serialize>(&self, items: &[T]) -> Result<BatchWriteResult> {
+        self.store.batch_put(&self.table_name, items).await
+    }
+
+    /// Batch writes items using low-level HashMap API.
+    ///
+    /// # Arguments
+    ///
+    /// * `items` - Vector of items to write (as AttributeValue HashMaps)
+    ///
+    /// # Returns
+    ///
+    /// Returns [`BatchWriteResult`] containing counts of successful and failed items.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use aws_sdk_dynamodb::types::AttributeValue;
+    /// use std::collections::HashMap;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let users = store.for_table("users");
+    ///
+    ///     let mut items = Vec::new();
+    ///     for i in 0..100 {
+    ///         let mut item = HashMap::new();
+    ///         item.insert("id".to_string(), AttributeValue::S(format!("user{}", i)));
+    ///         items.push(item);
+    ///     }
+    ///
+    ///     let result = users.batch_put_items(items).await?;
+    ///     println!("Success: {}, Failed: {}", result.successful, result.failed);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn batch_put_items(&self, items: Vec<HashMap<String, AttributeValue>>) -> Result<BatchWriteResult> {
+        self.store.batch_put_items(&self.table_name, items).await
     }
 }

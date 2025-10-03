@@ -175,5 +175,9 @@
 pub mod error;
 pub mod store;
 
+// Internal utilities
+mod chunking;
+mod retry;
+
 pub use error::{Error, Result};
-pub use store::{DynamoDbStore, TableBoundStore};
+pub use store::{BatchWriteResult, DynamoDbStore, FailedItem, TableBoundStore};
