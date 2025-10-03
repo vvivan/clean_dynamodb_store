@@ -4,11 +4,16 @@
 
 ## Features
 
+- **Complete CRUD Operations** - Put, Get, Delete, Update with type-safe and low-level APIs
+- **Advanced Querying** - Query and Scan operations with filter expressions
+- **Batch Operations** - Efficient batch reads and writes with automatic chunking
 - **Type-safe API** - Work with your own Rust structs using serde
 - **Efficient client reuse** - Following AWS SDK best practices
 - **Optimized for AWS Lambda** - Minimal cold start overhead
 - **Dual API** - High-level type-safe methods + low-level HashMap methods
 - **Full serde support** - Flattening, enums, custom serialization
+- **Update Expressions** - Partial updates with SET, ADD, REMOVE, DELETE
+- **Pagination Support** - Query and Scan with `last_evaluated_key`
 - **Input validation** - Table names and items/keys
 - **Custom error types** - Better error handling with thiserror
 - **Clean architecture** - Designed with SOLID principles in mind
@@ -152,6 +157,127 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut key = HashMap::new();
     key.insert("id".to_string(), AttributeValue::S("user123".to_string()));
     store.delete_item("users", key).await?;
+
+    Ok(())
+}
+```
+
+### Update Operations
+
+For partial item updates without replacing the entire item:
+
+```rust
+use clean_dynamodb_store::DynamoDbStore;
+use aws_sdk_dynamodb::types::AttributeValue;
+use serde::Serialize;
+use std::collections::HashMap;
+
+#[derive(Serialize)]
+struct UserKey {
+    id: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = DynamoDbStore::new().await?;
+
+    let key = UserKey { id: "user123".into() };
+
+    // Update specific attributes using update expressions
+    let update_expression = "SET age = :age, #n = :name".to_string();
+
+    let mut values = HashMap::new();
+    values.insert(":age".to_string(), AttributeValue::N("31".to_string()));
+    values.insert(":name".to_string(), AttributeValue::S("John Updated".to_string()));
+
+    let mut names = HashMap::new();
+    names.insert("#n".to_string(), "name".to_string()); // 'name' is a reserved keyword
+
+    store.update("users", &key, update_expression, Some(values), Some(names)).await?;
+
+    Ok(())
+}
+```
+
+**Update expression actions:**
+- `SET` - Add or update attributes
+- `REMOVE` - Delete attributes
+- `ADD` - Increment numbers or add to sets
+- `DELETE` - Remove from sets
+
+### Query Operations
+
+Efficiently retrieve items by partition key (and optional sort key):
+
+```rust
+use clean_dynamodb_store::DynamoDbStore;
+use aws_sdk_dynamodb::types::AttributeValue;
+use serde::Deserialize;
+use std::collections::HashMap;
+
+#[derive(Deserialize)]
+struct Order {
+    user_id: String,
+    order_id: String,
+    total: f64,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = DynamoDbStore::new().await?;
+
+    // Query all orders for a specific user
+    let key_condition = "user_id = :user_id".to_string();
+
+    let mut values = HashMap::new();
+    values.insert(":user_id".to_string(), AttributeValue::S("user123".to_string()));
+
+    let result = store.query::<Order>("orders", key_condition, values, None).await?;
+
+    println!("Found {} orders", result.count);
+    for order in result.items {
+        println!("Order {}: ${}", order.order_id, order.total);
+    }
+
+    // Handle pagination if needed
+    if let Some(last_key) = result.last_evaluated_key {
+        // Use last_key for next query
+    }
+
+    Ok(())
+}
+```
+
+### Scan Operations
+
+Scan entire table (use sparingly, prefer Query when possible):
+
+```rust
+use clean_dynamodb_store::DynamoDbStore;
+use aws_sdk_dynamodb::types::AttributeValue;
+use serde::Deserialize;
+use std::collections::HashMap;
+
+#[derive(Deserialize)]
+struct User {
+    id: String,
+    name: String,
+    age: u32,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = DynamoDbStore::new().await?;
+
+    // Scan with filter
+    let filter = Some("age > :min_age".to_string());
+
+    let mut values = HashMap::new();
+    values.insert(":min_age".to_string(), AttributeValue::N("18".to_string()));
+
+    let result = store.scan::<User>("users", filter, Some(values), None).await?;
+
+    println!("Found {} users (scanned {})", result.count, result.scanned_count);
 
     Ok(())
 }

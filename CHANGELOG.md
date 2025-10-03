@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Update Operations** - Partial item updates with update expressions
+  - `update<K>()` - Type-safe update with key structs
+  - `update_item()` - Low-level HashMap API
+  - Support for SET, ADD, REMOVE, DELETE operations via update expressions
+  - Expression attribute values and names for placeholders and reserved keywords
+  - Available on both `DynamoDbStore` and `TableBoundStore`
+- **Query Operations** - Efficient partition key-based retrieval
+  - `query<T>()` - Type-safe query with automatic deserialization
+  - `query_items()` - Low-level HashMap API
+  - `QueryResult<T>` - Contains items, count, and pagination support
+  - Key condition expressions for partition and sort key filtering
+  - Pagination support via `last_evaluated_key`
+  - Available on both `DynamoDbStore` and `TableBoundStore`
+- **Scan Operations** - Full table scans with optional filtering
+  - `scan<T>()` - Type-safe scan with automatic deserialization
+  - `scan_items()` - Low-level HashMap API
+  - `ScanResult<T>` - Contains items, count, scanned_count, and pagination
+  - Optional filter expressions applied after scan
+  - Pagination support via `last_evaluated_key`
+  - Available on both `DynamoDbStore` and `TableBoundStore`
 - **Batch Get Operations** - Efficiently retrieve large numbers of items
   - `batch_get<K, T>()` - Batch retrieve with type-safe structs
   - `batch_get_items()` - Batch retrieve with low-level HashMap API
@@ -30,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TableBoundStore` - Eliminates need to pass table name on every operation
   - Ideal for implementing repository pattern (one repository per entity/table)
   - Perfect for clean architecture and domain-driven design
-  - All operations available: `put()`, `delete()`, `get()`, `put_item()`, `delete_item()`, `batch_put()`, `batch_put_items()`, `batch_get()`, `batch_get_items()`
+  - All operations available: `put()`, `delete()`, `get()`, `put_item()`, `delete_item()`, `batch_put()`, `batch_put_items()`, `batch_get()`, `batch_get_items()`, `update()`, `update_item()`, `query()`, `query_items()`, `scan()`, `scan_items()`
 - **Type-safe API** - High-level methods using serde for ergonomic DynamoDB operations
   - `put<T: Serialize>()` - Insert/update items using Rust structs
   - `delete<K: Serialize>()` - Delete items using key structs

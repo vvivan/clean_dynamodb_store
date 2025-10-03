@@ -6,6 +6,13 @@ use crate::error::{Error, Result};
 mod single;
 mod batch;
 mod table_bound;
+mod update;
+mod query;
+mod scan;
+
+// Re-export query and scan result types
+pub use query::QueryResult;
+pub use scan::ScanResult;
 
 /// Result of a batch write operation.
 ///

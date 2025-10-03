@@ -181,5 +181,6 @@ mod retry;
 
 pub use error::{Error, Result};
 pub use store::{
-    BatchGetResult, BatchWriteResult, DynamoDbStore, FailedItem, FailedKey, TableBoundStore,
+    BatchGetResult, BatchWriteResult, DynamoDbStore, FailedItem, FailedKey, QueryResult,
+    ScanResult, TableBoundStore,
 };

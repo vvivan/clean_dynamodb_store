@@ -1,6 +1,7 @@
 use aws_sdk_dynamodb::{
     operation::delete_item::DeleteItemOutput,
     operation::put_item::PutItemOutput,
+    operation::update_item::UpdateItemOutput,
     types::AttributeValue,
 };
 use serde::de::DeserializeOwned;
@@ -8,7 +9,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 use crate::error::Result;
-use super::{BatchGetResult, BatchWriteResult, TableBoundStore};
+use super::{BatchGetResult, BatchWriteResult, QueryResult, ScanResult, TableBoundStore};
 
 impl TableBoundStore {
     /// Gets the table name this store is bound to.
@@ -407,5 +408,332 @@ impl TableBoundStore {
     /// ```
     pub async fn batch_get_items(&self, keys: Vec<HashMap<String, AttributeValue>>) -> Result<BatchGetResult<HashMap<String, AttributeValue>>> {
         self.store.batch_get_items(&self.table_name, keys).await
+    }
+
+    /// Updates an item using low-level HashMap API.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - A HashMap containing the primary key attributes
+    /// * `update_expression` - A string that defines how to update the item
+    /// * `expression_attribute_values` - Optional HashMap mapping placeholder values in the update expression
+    /// * `expression_attribute_names` - Optional HashMap mapping placeholder names in the update expression
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(UpdateItemOutput)` on success, containing the response from DynamoDB.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key map is empty
+    /// - The update expression is empty
+    /// - AWS credentials are not properly configured
+    /// - The table does not exist
+    /// - The update expression is invalid
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    pub async fn update_item(
+        &self,
+        key: HashMap<String, AttributeValue>,
+        update_expression: String,
+        expression_attribute_values: Option<HashMap<String, AttributeValue>>,
+        expression_attribute_names: Option<HashMap<String, String>>,
+    ) -> Result<UpdateItemOutput> {
+        self.store.update_item(
+            &self.table_name,
+            key,
+            update_expression,
+            expression_attribute_values,
+            expression_attribute_names,
+        ).await
+    }
+
+    /// Updates an item using a type-safe key struct.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `K` - Any type that implements [`Serialize`] representing the primary key
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - A reference to the key struct identifying the item to update
+    /// * `update_expression` - A string that defines how to update the item
+    /// * `expression_attribute_values` - Optional HashMap mapping placeholder values in the update expression
+    /// * `expression_attribute_names` - Optional HashMap mapping placeholder names in the update expression
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(UpdateItemOutput)` on success, containing the response from DynamoDB.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The update expression is empty
+    /// - Key serialization fails
+    /// - AWS credentials are not properly configured
+    /// - The table does not exist
+    /// - The update expression is invalid
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use aws_sdk_dynamodb::types::AttributeValue;
+    /// use serde::Serialize;
+    /// use std::collections::HashMap;
+    ///
+    /// #[derive(Serialize)]
+    /// struct UserKey {
+    ///     id: String,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let users = store.for_table("users");
+    ///
+    ///     let key = UserKey { id: "user123".into() };
+    ///     let update_expression = "SET age = :age".to_string();
+    ///
+    ///     let mut values = HashMap::new();
+    ///     values.insert(":age".to_string(), AttributeValue::N("31".to_string()));
+    ///
+    ///     users.update(&key, update_expression, Some(values), None).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn update<K: Serialize>(
+        &self,
+        key: &K,
+        update_expression: String,
+        expression_attribute_values: Option<HashMap<String, AttributeValue>>,
+        expression_attribute_names: Option<HashMap<String, String>>,
+    ) -> Result<UpdateItemOutput> {
+        self.store.update(
+            &self.table_name,
+            key,
+            update_expression,
+            expression_attribute_values,
+            expression_attribute_names,
+        ).await
+    }
+
+    /// Queries items using low-level HashMap API.
+    ///
+    /// # Arguments
+    ///
+    /// * `key_condition_expression` - Expression to filter items
+    /// * `expression_attribute_values` - HashMap mapping placeholder values in the expression
+    /// * `expression_attribute_names` - Optional HashMap mapping placeholder names in the expression
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(QueryResult<HashMap<String, AttributeValue>>)` containing the retrieved items and pagination info.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key condition expression is empty
+    /// - Expression attribute values are empty
+    /// - AWS credentials are not properly configured
+    /// - The table does not exist
+    /// - The key condition expression is invalid
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    pub async fn query_items(
+        &self,
+        key_condition_expression: String,
+        expression_attribute_values: HashMap<String, AttributeValue>,
+        expression_attribute_names: Option<HashMap<String, String>>,
+    ) -> Result<QueryResult<HashMap<String, AttributeValue>>> {
+        self.store.query_items(
+            &self.table_name,
+            key_condition_expression,
+            expression_attribute_values,
+            expression_attribute_names,
+        ).await
+    }
+
+    /// Queries items and deserializes them into type-safe structs.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Any type that implements [`DeserializeOwned`] for the item data
+    ///
+    /// # Arguments
+    ///
+    /// * `key_condition_expression` - Expression to filter items
+    /// * `expression_attribute_values` - HashMap mapping placeholder values in the expression
+    /// * `expression_attribute_names` - Optional HashMap mapping placeholder names in the expression
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(QueryResult<T>)` containing the retrieved items and pagination info.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key condition expression is empty
+    /// - Expression attribute values are empty
+    /// - Item deserialization fails
+    /// - AWS credentials are not properly configured
+    /// - The table does not exist
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use aws_sdk_dynamodb::types::AttributeValue;
+    /// use serde::Deserialize;
+    /// use std::collections::HashMap;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Order {
+    ///     user_id: String,
+    ///     order_id: String,
+    ///     total: f64,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let orders = store.for_table("orders");
+    ///
+    ///     let key_condition_expression = "user_id = :user_id".to_string();
+    ///
+    ///     let mut values = HashMap::new();
+    ///     values.insert(":user_id".to_string(), AttributeValue::S("user123".to_string()));
+    ///
+    ///     let result = orders.query::<Order>(key_condition_expression, values, None).await?;
+    ///
+    ///     println!("Found {} orders", result.count);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn query<T: DeserializeOwned>(
+        &self,
+        key_condition_expression: String,
+        expression_attribute_values: HashMap<String, AttributeValue>,
+        expression_attribute_names: Option<HashMap<String, String>>,
+    ) -> Result<QueryResult<T>> {
+        self.store.query(
+            &self.table_name,
+            key_condition_expression,
+            expression_attribute_values,
+            expression_attribute_names,
+        ).await
+    }
+
+    /// Scans all items using low-level HashMap API.
+    ///
+    /// # Arguments
+    ///
+    /// * `filter_expression` - Optional expression to filter items after scanning
+    /// * `expression_attribute_values` - Optional HashMap mapping placeholder values in the filter expression
+    /// * `expression_attribute_names` - Optional HashMap mapping placeholder names in the filter expression
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(ScanResult<HashMap<String, AttributeValue>>)` containing the retrieved items and counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - AWS credentials are not properly configured
+    /// - The table does not exist
+    /// - The filter expression is invalid
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    pub async fn scan_items(
+        &self,
+        filter_expression: Option<String>,
+        expression_attribute_values: Option<HashMap<String, AttributeValue>>,
+        expression_attribute_names: Option<HashMap<String, String>>,
+    ) -> Result<ScanResult<HashMap<String, AttributeValue>>> {
+        self.store.scan_items(
+            &self.table_name,
+            filter_expression,
+            expression_attribute_values,
+            expression_attribute_names,
+        ).await
+    }
+
+    /// Scans all items and deserializes them into type-safe structs.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Any type that implements [`DeserializeOwned`] for the item data
+    ///
+    /// # Arguments
+    ///
+    /// * `filter_expression` - Optional expression to filter items after scanning
+    /// * `expression_attribute_values` - Optional HashMap mapping placeholder values in the filter expression
+    /// * `expression_attribute_names` - Optional HashMap mapping placeholder names in the filter expression
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(ScanResult<T>)` containing the retrieved items and counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Item deserialization fails
+    /// - AWS credentials are not properly configured
+    /// - The table does not exist
+    /// - The filter expression is invalid
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use aws_sdk_dynamodb::types::AttributeValue;
+    /// use serde::Deserialize;
+    /// use std::collections::HashMap;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    ///     age: u32,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let users = store.for_table("users");
+    ///
+    ///     let filter_expression = Some("age > :min_age".to_string());
+    ///
+    ///     let mut values = HashMap::new();
+    ///     values.insert(":min_age".to_string(), AttributeValue::N("18".to_string()));
+    ///
+    ///     let result = users.scan::<User>(filter_expression, Some(values), None).await?;
+    ///
+    ///     println!("Found {} users", result.count);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn scan<T: DeserializeOwned>(
+        &self,
+        filter_expression: Option<String>,
+        expression_attribute_values: Option<HashMap<String, AttributeValue>>,
+        expression_attribute_names: Option<HashMap<String, String>>,
+    ) -> Result<ScanResult<T>> {
+        self.store.scan(
+            &self.table_name,
+            filter_expression,
+            expression_attribute_values,
+            expression_attribute_names,
+        ).await
     }
 }
