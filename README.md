@@ -159,7 +159,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Batch Operations
 
-For efficiently writing large numbers of items, use batch operations. The library automatically handles chunking into batches of 25 items and retries with exponential backoff:
+Efficiently write or read large numbers of items using batch operations. The library automatically handles chunking and retries with exponential backoff.
+
+#### Batch Write
+
+For writing large numbers of items, batch operations chunk into groups of 25 (DynamoDB's BatchWriteItem limit):
 
 ```rust
 use clean_dynamodb_store::DynamoDbStore;
@@ -200,8 +204,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+#### Batch Get
+
+For retrieving large numbers of items, batch operations chunk into groups of 100 (DynamoDB's BatchGetItem limit):
+
+```rust
+use clean_dynamodb_store::DynamoDbStore;
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize)]
+struct UserKey {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct User {
+    id: String,
+    name: String,
+    age: u32,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = DynamoDbStore::new().await?;
+
+    // Create 250 keys to retrieve
+    let keys: Vec<UserKey> = (0..250)
+        .map(|i| UserKey {
+            id: format!("user{}", i),
+        })
+        .collect();
+
+    // Batch get - automatically chunks into groups of 100 and retries failures
+    let result = store.batch_get::<UserKey, User>("users", &keys).await?;
+
+    println!("Successfully retrieved {} items", result.successful);
+    for user in &result.items {
+        println!("User: {} (age {})", user.name, user.age);
+    }
+
+    if result.failed > 0 {
+        println!("Failed to retrieve {} keys", result.failed);
+    }
+
+    Ok(())
+}
+```
+
 **Batch operations features:**
-- Automatic chunking into DynamoDB's 25-item limit
+- Automatic chunking (25 items for write, 100 for get)
 - Exponential backoff retry for throttled requests (up to 3 retries)
 - Detailed success/failure reporting
 - Works with both type-safe API and table-scoped stores

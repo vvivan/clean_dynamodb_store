@@ -8,11 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Batch Get Operations** - Efficiently retrieve large numbers of items
+  - `batch_get<K, T>()` - Batch retrieve with type-safe structs
+  - `batch_get_items()` - Batch retrieve with low-level HashMap API
+  - `BatchGetResult<T>` - Contains retrieved items and failure statistics
+  - `FailedKey` - Information about keys that failed after retries
+  - Automatic chunking into batches of 100 (DynamoDB's BatchGetItem limit)
+  - Exponential backoff retry for unprocessed keys (up to 3 retries)
+  - Available on both `DynamoDbStore` and `TableBoundStore`
+  - Returns all successfully retrieved items plus detailed error reporting
 - **Batch Write Operations** - Efficiently write large numbers of items
   - `batch_put<T>()` - Batch write with type-safe structs
   - `batch_put_items()` - Batch write with low-level HashMap API
   - `BatchWriteResult` - Detailed success/failure statistics
-  - Automatic chunking into batches of 25 (DynamoDB's limit)
+  - Automatic chunking into batches of 25 (DynamoDB's BatchWriteItem limit)
   - Exponential backoff retry for unprocessed items (up to 3 retries)
   - Available on both `DynamoDbStore` and `TableBoundStore`
   - Handles throttling and provides detailed error reporting
@@ -21,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TableBoundStore` - Eliminates need to pass table name on every operation
   - Ideal for implementing repository pattern (one repository per entity/table)
   - Perfect for clean architecture and domain-driven design
-  - All operations available: `put()`, `delete()`, `get()`, `put_item()`, `delete_item()`, `batch_put()`, `batch_put_items()`
+  - All operations available: `put()`, `delete()`, `get()`, `put_item()`, `delete_item()`, `batch_put()`, `batch_put_items()`, `batch_get()`, `batch_get_items()`
 - **Type-safe API** - High-level methods using serde for ergonomic DynamoDB operations
   - `put<T: Serialize>()` - Insert/update items using Rust structs
   - `delete<K: Serialize>()` - Delete items using key structs
@@ -49,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **BREAKING**: Error type changed from `aws_sdk_dynamodb::Error` to `clean_dynamodb_store::Error`
+- Refactored chunking utilities with idiomatic wrapper functions
+  - Added `chunk_for_write()` for batch write operations (25-item batches)
+  - Added `chunk_for_get()` for batch get operations (100-item batches)
+  - Improved API ergonomics by eliminating optional parameters
 - Updated to Rust 2024 edition
 - Updated aws-config from 1.1.9 to 1.8.6
 - Updated aws-sdk-dynamodb from 1.20.0 to 1.93.0

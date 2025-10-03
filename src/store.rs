@@ -2,7 +2,7 @@ use aws_sdk_dynamodb::{
     Client,
     operation::delete_item::DeleteItemOutput,
     operation::put_item::PutItemOutput,
-    types::{AttributeValue, PutRequest, WriteRequest},
+    types::{AttributeValue, KeysAndAttributes, PutRequest, WriteRequest},
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -28,6 +28,30 @@ pub struct BatchWriteResult {
 pub struct FailedItem {
     /// The item that failed (in DynamoDB's AttributeValue format)
     pub item: HashMap<String, AttributeValue>,
+    /// Error message describing why it failed
+    pub error: String,
+}
+
+/// Result of a batch get operation.
+///
+/// Contains retrieved items and information about successful and failed keys after all retry attempts.
+#[derive(Debug, Clone)]
+pub struct BatchGetResult<T> {
+    /// Number of successfully retrieved items
+    pub successful: usize,
+    /// Number of failed keys after all retries
+    pub failed: usize,
+    /// Successfully retrieved items
+    pub items: Vec<T>,
+    /// Keys that permanently failed with error details
+    pub failed_keys: Vec<FailedKey>,
+}
+
+/// Information about a key that failed to retrieve after all retry attempts.
+#[derive(Debug, Clone)]
+pub struct FailedKey {
+    /// The key that failed (in DynamoDB's AttributeValue format)
+    pub key: HashMap<String, AttributeValue>,
     /// Error message describing why it failed
     pub error: String,
 }
@@ -605,7 +629,7 @@ impl DynamoDbStore {
         let mut failed_items = Vec::new();
 
         // Use chunking utility to split items into DynamoDB-compliant batches
-        for chunk in crate::chunking::chunk_items(&items, None) {
+        for chunk in crate::chunking::chunk_for_write(&items) {
             let chunk_items: Vec<_> = chunk.to_vec();
 
             // Use retry utility for exponential backoff
@@ -783,6 +807,271 @@ impl DynamoDbStore {
             .collect();
 
         self.batch_put_items(table_name, item_maps?).await
+    }
+
+    /// Batch retrieves items from DynamoDB using the low-level HashMap API.
+    ///
+    /// This method automatically handles:
+    /// - Chunking keys into batches of 100 (DynamoDB's limit)
+    /// - Retrying unprocessed keys with exponential backoff
+    /// - Collecting all retrieved items and failures
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - The name of the DynamoDB table
+    /// * `keys` - Vector of keys to retrieve (as AttributeValue HashMaps)
+    ///
+    /// # Returns
+    ///
+    /// Returns [`BatchGetResult`] containing retrieved items and failure information.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The table name is empty
+    /// - AWS credentials are not properly configured
+    /// - The specified table does not exist
+    /// - Network connectivity issues occur
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use aws_sdk_dynamodb::types::AttributeValue;
+    /// use std::collections::HashMap;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///
+    ///     let mut keys = Vec::new();
+    ///     for i in 0..150 {
+    ///         let mut key = HashMap::new();
+    ///         key.insert("id".to_string(), AttributeValue::S(format!("user{}", i)));
+    ///         keys.push(key);
+    ///     }
+    ///
+    ///     let result = store.batch_get_items("users", keys).await?;
+    ///     println!("Retrieved: {}, Failed: {}", result.successful, result.failed);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn batch_get_items(
+        &self,
+        table_name: &str,
+        keys: Vec<HashMap<String, AttributeValue>>,
+    ) -> Result<BatchGetResult<HashMap<String, AttributeValue>>> {
+        Self::validate_table_name(table_name)?;
+
+        if keys.is_empty() {
+            return Ok(BatchGetResult {
+                successful: 0,
+                failed: 0,
+                items: Vec::new(),
+                failed_keys: Vec::new(),
+            });
+        }
+
+        let mut all_items = Vec::new();
+        let mut failed_keys = Vec::new();
+
+        // Use chunking utility to split keys into DynamoDB-compliant batches
+        for chunk in crate::chunking::chunk_for_get(&keys) {
+            let chunk_keys: Vec<_> = chunk.to_vec();
+
+            // Use retry utility for exponential backoff
+            let retry_result = crate::retry::retry_with_backoff(
+                || self.execute_batch_get(table_name, &chunk_keys),
+                &crate::retry::RetryConfig::default(),
+            )
+            .await;
+
+            match retry_result {
+                Ok((mut items, mut failures)) => {
+                    all_items.append(&mut items);
+                    failed_keys.append(&mut failures);
+                }
+                Err(e) => {
+                    // Complete batch failure - record all keys as failed
+                    for key in chunk_keys {
+                        failed_keys.push(FailedKey {
+                            key,
+                            error: format!("Batch get error: {}", e),
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(BatchGetResult {
+            successful: all_items.len(),
+            failed: failed_keys.len(),
+            items: all_items,
+            failed_keys,
+        })
+    }
+
+    /// Execute a single batch get operation
+    ///
+    /// Returns (retrieved_items, failed_keys, should_retry)
+    async fn execute_batch_get(
+        &self,
+        table_name: &str,
+        keys: &[HashMap<String, AttributeValue>],
+    ) -> Result<((Vec<HashMap<String, AttributeValue>>, Vec<FailedKey>), bool)> {
+        // Build keys and attributes for batch get
+        let keys_and_attrs = KeysAndAttributes::builder()
+            .set_keys(Some(keys.to_vec()))
+            .build()
+            .map_err(|e| Error::Validation(format!("Failed to build KeysAndAttributes: {}", e)))?;
+
+        // Send batch get request
+        let mut request_items = HashMap::new();
+        request_items.insert(table_name.to_string(), keys_and_attrs);
+
+        let output = self
+            .client
+            .batch_get_item()
+            .set_request_items(Some(request_items))
+            .send()
+            .await
+            .map_err(|e| Error::AwsSdk(Box::new(e.into())))?;
+
+        // Collect retrieved items
+        let mut retrieved_items = Vec::new();
+        if let Some(responses) = output.responses
+            && let Some(items) = responses.get(table_name)
+        {
+            retrieved_items = items.clone();
+        }
+
+        let failed_keys = Vec::new();
+
+        // Check for unprocessed keys
+        match output.unprocessed_keys {
+            Some(unprocessed) if !unprocessed.is_empty() => {
+                if let Some(_unprocessed_keys_and_attrs) = unprocessed.get(table_name) {
+                    // Mark as needing retry (retry utility will handle it)
+                    Ok(((retrieved_items, failed_keys), true))
+                } else {
+                    // All keys processed successfully
+                    Ok(((retrieved_items, failed_keys), false))
+                }
+            }
+            _ => {
+                // All keys processed successfully
+                Ok(((retrieved_items, failed_keys), false))
+            }
+        }
+    }
+
+    /// Batch retrieves items from DynamoDB using type-safe structs.
+    ///
+    /// This is a higher-level alternative to [`batch_get_items`](Self::batch_get_items) that works with
+    /// any key type implementing [`Serialize`] and deserializes results to any type implementing
+    /// [`DeserializeOwned`].
+    ///
+    /// The method automatically handles:
+    /// - Chunking keys into batches of 100 (DynamoDB's limit)
+    /// - Retrying unprocessed keys with exponential backoff (up to 3 retries)
+    /// - Deserializing retrieved items to the specified type
+    ///
+    /// # Type Parameters
+    ///
+    /// * `K` - Any type that implements [`Serialize`] representing the primary key
+    /// * `T` - Any type that implements [`DeserializeOwned`] for the item data
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - The name of the DynamoDB table
+    /// * `keys` - Slice of keys to retrieve
+    ///
+    /// # Returns
+    ///
+    /// Returns [`BatchGetResult<T>`] containing retrieved items and failure information.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The table name is empty
+    /// - Key serialization fails
+    /// - Item deserialization fails
+    /// - AWS credentials are not properly configured
+    /// - The specified table does not exist
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize)]
+    /// struct UserKey {
+    ///     id: String,
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    ///     age: u32,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///
+    ///     let keys: Vec<UserKey> = (0..150)
+    ///         .map(|i| UserKey {
+    ///             id: format!("user{}", i),
+    ///         })
+    ///         .collect();
+    ///
+    ///     let result = store.batch_get::<UserKey, User>("users", &keys).await?;
+    ///     println!("Retrieved {} users", result.items.len());
+    ///     for user in result.items {
+    ///         println!("User: {} (age {})", user.name, user.age);
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn batch_get<K: Serialize, T: DeserializeOwned>(
+        &self,
+        table_name: &str,
+        keys: &[K],
+    ) -> Result<BatchGetResult<T>> {
+        Self::validate_table_name(table_name)?;
+
+        // Convert all keys to HashMap using serde_dynamo
+        let key_maps: Result<Vec<_>> = keys
+            .iter()
+            .map(|key| {
+                serde_dynamo::to_item(key)
+                    .map_err(|e| Error::Validation(format!("Failed to serialize key: {}", e)))
+            })
+            .collect();
+
+        // Get items using low-level API
+        let result = self.batch_get_items(table_name, key_maps?).await?;
+
+        // Deserialize items to type T
+        let deserialized_items: Result<Vec<T>> = result
+            .items
+            .iter()
+            .map(|item| {
+                serde_dynamo::from_item(item.clone())
+                    .map_err(|e| Error::Validation(format!("Failed to deserialize item: {}", e)))
+            })
+            .collect();
+
+        Ok(BatchGetResult {
+            successful: result.successful,
+            failed: result.failed,
+            items: deserialized_items?,
+            failed_keys: result.failed_keys,
+        })
     }
 
     /// Creates a table-bound store for the specified table.
@@ -1181,5 +1470,100 @@ impl TableBoundStore {
     /// ```
     pub async fn batch_put_items(&self, items: Vec<HashMap<String, AttributeValue>>) -> Result<BatchWriteResult> {
         self.store.batch_put_items(&self.table_name, items).await
+    }
+
+    /// Batch retrieves items using type-safe structs.
+    ///
+    /// This method automatically handles chunking keys into batches of 100 and retrying
+    /// unprocessed keys with exponential backoff.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `K` - Any type that implements [`Serialize`] representing the primary key
+    /// * `T` - Any type that implements [`DeserializeOwned`] for the item data
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - Slice of keys to retrieve
+    ///
+    /// # Returns
+    ///
+    /// Returns [`BatchGetResult<T>`] containing retrieved items and failure information.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize)]
+    /// struct UserKey {
+    ///     id: String,
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let users = store.for_table("users");
+    ///
+    ///     let keys: Vec<UserKey> = (0..150)
+    ///         .map(|i| UserKey {
+    ///             id: format!("user{}", i),
+    ///         })
+    ///         .collect();
+    ///
+    ///     let result = users.batch_get::<UserKey, User>(&keys).await?;
+    ///     println!("Retrieved {} users", result.items.len());
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn batch_get<K: Serialize, T: DeserializeOwned>(&self, keys: &[K]) -> Result<BatchGetResult<T>> {
+        self.store.batch_get(&self.table_name, keys).await
+    }
+
+    /// Batch retrieves items using low-level HashMap API.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - Vector of keys to retrieve (as AttributeValue HashMaps)
+    ///
+    /// # Returns
+    ///
+    /// Returns [`BatchGetResult`] containing retrieved items and failure information.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use aws_sdk_dynamodb::types::AttributeValue;
+    /// use std::collections::HashMap;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let users = store.for_table("users");
+    ///
+    ///     let mut keys = Vec::new();
+    ///     for i in 0..150 {
+    ///         let mut key = HashMap::new();
+    ///         key.insert("id".to_string(), AttributeValue::S(format!("user{}", i)));
+    ///         keys.push(key);
+    ///     }
+    ///
+    ///     let result = users.batch_get_items(keys).await?;
+    ///     println!("Retrieved: {}, Failed: {}", result.successful, result.failed);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn batch_get_items(&self, keys: Vec<HashMap<String, AttributeValue>>) -> Result<BatchGetResult<HashMap<String, AttributeValue>>> {
+        self.store.batch_get_items(&self.table_name, keys).await
     }
 }

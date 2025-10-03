@@ -180,4 +180,6 @@ mod chunking;
 mod retry;
 
 pub use error::{Error, Result};
-pub use store::{BatchWriteResult, DynamoDbStore, FailedItem, TableBoundStore};
+pub use store::{
+    BatchGetResult, BatchWriteResult, DynamoDbStore, FailedItem, FailedKey, TableBoundStore,
+};

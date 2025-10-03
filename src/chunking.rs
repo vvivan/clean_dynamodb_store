@@ -1,10 +1,16 @@
 /// DynamoDB BatchWriteItem maximum items per batch
 pub(crate) const DYNAMODB_BATCH_LIMIT: usize = 25;
 
+/// DynamoDB BatchGetItem maximum items per batch
+pub(crate) const DYNAMODB_BATCH_GET_LIMIT: usize = 100;
+
 /// Chunk items into batches with configurable size
 ///
 /// Splits a slice into chunks of a specified size. If no chunk size is provided,
 /// defaults to DynamoDB's BatchWriteItem limit of 25 items.
+///
+/// This is a flexible utility primarily used in tests. For production code,
+/// use [`chunk_for_write`] or [`chunk_for_get`] instead.
 ///
 /// # Arguments
 ///
@@ -27,9 +33,58 @@ pub(crate) const DYNAMODB_BATCH_LIMIT: usize = 25;
 /// let chunks = chunk_items(&items, Some(10));
 /// assert_eq!(chunks.len(), 10);
 /// ```
+#[allow(dead_code)]
 pub(crate) fn chunk_items<T>(items: &[T], chunk_size: Option<usize>) -> Vec<&[T]> {
     let size = chunk_size.unwrap_or(DYNAMODB_BATCH_LIMIT);
     items.chunks(size).collect()
+}
+
+/// Chunk items for DynamoDB BatchWriteItem operations (25 items per batch)
+///
+/// This is a convenience wrapper around the generic chunking logic that uses
+/// DynamoDB's BatchWriteItem limit of 25 items per batch.
+///
+/// # Arguments
+///
+/// * `items` - Slice of items to chunk
+///
+/// # Returns
+///
+/// A vector of slices, where each slice contains at most 25 items.
+///
+/// # Example
+///
+/// ```ignore
+/// let items: Vec<i32> = (0..100).collect();
+/// let chunks = chunk_for_write(&items);
+/// assert_eq!(chunks.len(), 4); // 25 + 25 + 25 + 25
+/// ```
+pub(crate) fn chunk_for_write<T>(items: &[T]) -> Vec<&[T]> {
+    items.chunks(DYNAMODB_BATCH_LIMIT).collect()
+}
+
+/// Chunk items for DynamoDB BatchGetItem operations (100 items per batch)
+///
+/// This is a convenience wrapper around the generic chunking logic that uses
+/// DynamoDB's BatchGetItem limit of 100 items per batch.
+///
+/// # Arguments
+///
+/// * `items` - Slice of items to chunk
+///
+/// # Returns
+///
+/// A vector of slices, where each slice contains at most 100 items.
+///
+/// # Example
+///
+/// ```ignore
+/// let keys: Vec<i32> = (0..250).collect();
+/// let chunks = chunk_for_get(&keys);
+/// assert_eq!(chunks.len(), 3); // 100 + 100 + 50
+/// ```
+pub(crate) fn chunk_for_get<T>(items: &[T]) -> Vec<&[T]> {
+    items.chunks(DYNAMODB_BATCH_GET_LIMIT).collect()
 }
 
 #[cfg(test)]
