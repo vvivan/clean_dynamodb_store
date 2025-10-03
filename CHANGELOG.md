@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Table-Scoped API** - Repository pattern support with `TableBoundStore`
+  - `DynamoDbStore::for_table(name)` - Create table-bound stores
+  - `TableBoundStore` - Eliminates need to pass table name on every operation
+  - Ideal for implementing repository pattern (one repository per entity/table)
+  - Perfect for clean architecture and domain-driven design
+  - All operations available: `put()`, `delete()`, `get()`, `put_item()`, `delete_item()`
 - **Type-safe API** - High-level methods using serde for ergonomic DynamoDB operations
   - `put<T: Serialize>()` - Insert/update items using Rust structs
   - `delete<K: Serialize>()` - Delete items using key structs

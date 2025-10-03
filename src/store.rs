@@ -512,4 +512,312 @@ impl DynamoDbStore {
             None => Ok(None),
         }
     }
+
+    /// Creates a table-bound store for the specified table.
+    ///
+    /// This returns a [`TableBoundStore`] that eliminates the need to pass the table name
+    /// on every operation. This is useful when implementing the repository pattern or when
+    /// working with a specific table extensively.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - The name of the DynamoDB table to bind to
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///
+    ///     // Create a table-bound store
+    ///     let users = store.for_table("users");
+    ///
+    ///     let user = User { id: "123".into(), name: "John".into() };
+    ///     users.put(&user).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn for_table(&self, table_name: impl Into<String>) -> TableBoundStore {
+        TableBoundStore {
+            store: self.clone(),
+            table_name: table_name.into(),
+        }
+    }
+}
+
+/// A table-bound DynamoDB store that binds operations to a specific table.
+///
+/// This struct wraps a [`DynamoDbStore`] and a table name, eliminating the need to pass
+/// the table name on every operation. This is particularly useful when:
+///
+/// - Implementing the repository pattern (one repository per entity/table)
+/// - Working extensively with a specific table
+/// - Building domain models with clean architecture principles
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use clean_dynamodb_store::DynamoDbStore;
+/// use serde::{Serialize, Deserialize};
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct User {
+///     id: String,
+///     name: String,
+/// }
+///
+/// #[derive(Serialize)]
+/// struct UserKey {
+///     id: String,
+/// }
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let store = DynamoDbStore::new().await?;
+///     let users = store.for_table("users");
+///
+///     // Put an item
+///     let user = User { id: "123".into(), name: "John".into() };
+///     users.put(&user).await?;
+///
+///     // Get an item
+///     let key = UserKey { id: "123".into() };
+///     let user: Option<User> = users.get(&key).await?;
+///
+///     // Delete an item
+///     users.delete(&key).await?;
+///
+///     Ok(())
+/// }
+/// ```
+#[derive(Clone, Debug)]
+pub struct TableBoundStore {
+    store: DynamoDbStore,
+    table_name: String,
+}
+
+impl TableBoundStore {
+    /// Gets the table name this store is bound to.
+    pub fn table_name(&self) -> &str {
+        &self.table_name
+    }
+
+    /// Inserts or updates an item using a type-safe struct.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - Any type that implements [`Serialize`]
+    ///
+    /// # Arguments
+    ///
+    /// * `item` - A reference to the item to insert or update
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(PutItemOutput)` on success, containing the response from DynamoDB.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Serialization fails (invalid struct for DynamoDB)
+    /// - AWS credentials are not properly configured
+    /// - The specified table does not exist
+    /// - The item exceeds DynamoDB's size limits (400 KB)
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let users = store.for_table("users");
+    ///
+    ///     let user = User { id: "123".into(), name: "John".into() };
+    ///     users.put(&user).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn put<T: Serialize>(&self, item: &T) -> Result<PutItemOutput> {
+        self.store.put(&self.table_name, item).await
+    }
+
+    /// Deletes an item using a type-safe key struct.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `K` - Any type that implements [`Serialize`] representing the primary key
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - A reference to the key struct identifying the item to delete
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(DeleteItemOutput)` on success. The operation succeeds even if the item doesn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Serialization fails (invalid key struct for DynamoDB)
+    /// - AWS credentials are not properly configured
+    /// - The specified table does not exist
+    /// - The key does not match the table's key schema
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct UserKey {
+    ///     id: String,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let users = store.for_table("users");
+    ///
+    ///     let key = UserKey { id: "123".into() };
+    ///     users.delete(&key).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn delete<K: Serialize>(&self, key: &K) -> Result<DeleteItemOutput> {
+        self.store.delete(&self.table_name, key).await
+    }
+
+    /// Retrieves an item from DynamoDB and deserializes it into a type-safe struct.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `K` - Any type that implements [`Serialize`] representing the primary key
+    /// * `T` - Any type that implements [`DeserializeOwned`] for the item data
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - A reference to the key struct identifying the item to retrieve
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(Some(T))` if the item exists and was successfully deserialized.
+    /// Returns `Ok(None)` if the item does not exist in the table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Key serialization fails
+    /// - Item deserialization fails (data doesn't match expected type)
+    /// - AWS credentials are not properly configured
+    /// - The specified table does not exist
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use clean_dynamodb_store::DynamoDbStore;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize)]
+    /// struct UserKey {
+    ///     id: String,
+    /// }
+    ///
+    /// #[derive(Deserialize)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    /// }
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let store = DynamoDbStore::new().await?;
+    ///     let users = store.for_table("users");
+    ///
+    ///     let key = UserKey { id: "123".into() };
+    ///     match users.get::<UserKey, User>(&key).await? {
+    ///         Some(user) => println!("Found user: {}", user.name),
+    ///         None => println!("User not found"),
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn get<K: Serialize, T: DeserializeOwned>(&self, key: &K) -> Result<Option<T>> {
+        self.store.get(&self.table_name, key).await
+    }
+
+    /// Inserts or updates an item using low-level HashMap API.
+    ///
+    /// # Arguments
+    ///
+    /// * `item` - A HashMap containing the attribute names and values for the item
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(PutItemOutput)` on success, containing the response from DynamoDB.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The item map is empty
+    /// - AWS credentials are not properly configured
+    /// - The specified table does not exist
+    /// - The item exceeds DynamoDB's size limits (400 KB)
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    pub async fn put_item(&self, item: HashMap<String, AttributeValue>) -> Result<PutItemOutput> {
+        self.store.put_item(&self.table_name, item).await
+    }
+
+    /// Deletes an item using low-level HashMap API.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - A HashMap containing the primary key attributes
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(DeleteItemOutput)` on success. The operation succeeds even if the item doesn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key map is empty
+    /// - AWS credentials are not properly configured
+    /// - The specified table does not exist
+    /// - The key does not match the table's key schema
+    /// - Network connectivity issues occur
+    /// - IAM permissions are insufficient
+    pub async fn delete_item(&self, key: HashMap<String, AttributeValue>) -> Result<DeleteItemOutput> {
+        self.store.delete_item(&self.table_name, key).await
+    }
 }

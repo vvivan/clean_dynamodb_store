@@ -70,6 +70,48 @@
 //! }
 //! ```
 //!
+//! ### Table-Scoped API (Repository Pattern)
+//!
+//! For implementing the repository pattern or working extensively with a specific table,
+//! you can create a table-bound store that eliminates the need to pass the table name
+//! on every operation:
+//!
+//! ```rust,no_run
+//! use clean_dynamodb_store::DynamoDbStore;
+//! use serde::{Serialize, Deserialize};
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct User {
+//!     id: String,
+//!     name: String,
+//! }
+//!
+//! #[derive(Serialize)]
+//! struct UserKey {
+//!     id: String,
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let store = DynamoDbStore::new().await?;
+//!
+//!     // Create table-bound stores for repository pattern
+//!     let users = store.for_table("users");
+//!     let orders = store.for_table("orders");
+//!
+//!     // Use without passing table name
+//!     let user = User { id: "123".into(), name: "John".into() };
+//!     users.put(&user).await?;
+//!
+//!     let key = UserKey { id: "123".into() };
+//!     let user: Option<User> = users.get(&key).await?;
+//!
+//!     users.delete(&key).await?;
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
 //! ### Low-Level API
 //!
 //! For advanced use cases, you can use the low-level HashMap API:
@@ -134,4 +176,4 @@ pub mod error;
 pub mod store;
 
 pub use error::{Error, Result};
-pub use store::DynamoDbStore;
+pub use store::{DynamoDbStore, TableBoundStore};

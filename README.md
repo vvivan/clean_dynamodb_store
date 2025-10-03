@@ -80,6 +80,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Table-Scoped API (Repository Pattern)
+
+For implementing the repository pattern or working extensively with specific tables, you can create table-bound stores:
+
+```rust
+use clean_dynamodb_store::DynamoDbStore;
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct User {
+    id: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct UserKey {
+    id: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let store = DynamoDbStore::new().await?;
+
+    // Create table-bound stores - great for repository pattern
+    let users = store.for_table("users");
+    let orders = store.for_table("orders");
+
+    // Use without passing table name on each call
+    let user = User {
+        id: "user123".to_string(),
+        name: "John Doe".to_string(),
+    };
+    users.put(&user).await?;
+
+    let key = UserKey { id: "user123".to_string() };
+    let user: Option<User> = users.get(&key).await?;
+
+    users.delete(&key).await?;
+
+    Ok(())
+}
+```
+
+**When to use table-scoped stores:**
+- Implementing repository pattern (one repository per entity/table)
+- Building domain models with clean architecture principles
+- Working extensively with specific tables
+- Want cleaner method signatures without table name repetition
+
 ### Low-Level API
 
 For advanced use cases, you can work directly with DynamoDB's AttributeValue types:
